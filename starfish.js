@@ -5,6 +5,7 @@ const {
     githubToken,
     ignoreSelfOwnedEvents,
     minimumNumberOfContributions,
+    osiLicensesOnly,
 } = require('./globals');
 const { createLuxonDateTimeFromIso } = require('./dateTimes');
 const fetch = require('node-fetch');
@@ -58,7 +59,7 @@ function filterOutSelfOwnedEvents(events) {
     return filteredEvents;
 }
 
-function fetchPageOfDataAndFilter(url) {
+function fetchActivities(url) {
     return new Promise((resolve) => {
         fetch(url, {
             method: 'GET',
@@ -71,47 +72,26 @@ function fetchPageOfDataAndFilter(url) {
                     console.error(`Error: ${response.status} ${response.statusText} \nFor: ${url}`);
                     throw new Error(response.statusText);
                 }
+                let activities = [];
                 let parsed = parse(response.headers.get('link'));
-                let importantEvents = [];
                 response
                     .json()
                     .then((json) => {
-                        let filteredForImportant = filterResponseForImportantEvents(json);
-
-                        importantEvents = importantEvents.concat(filteredForImportant);
-
-                        if (ignoreSelfOwnedEvents === 'true') {
-                            importantEvents = filterOutSelfOwnedEvents(importantEvents);
-                        }
+                        activities = activities.concat(json);
                         if (parsed && parsed.next && parsed.next.url) {
-                            fetchPageOfDataAndFilter(parsed.next.url)
-                                .then((newEvents) => {
-                                    return resolve(importantEvents.concat(newEvents));
-                                })
-                                .catch((err) => {
-                                    console.error(
-                                        `Error fetching page of data for ${parsed.next.url}: ${err}`
-                                    );
-                                    throw err;
-                                });
+                            fetchActivities(parsed.next.url).then((nextResponse) => {
+                                return resolve(activities.concat(nextResponse));
+                            });
                         } else {
-                            return resolve(importantEvents);
+                            return resolve(activities);
                         }
                     })
                     .catch((err) => {
                         console.error('Error turning response into JSON:', err);
                     });
             })
-            .catch((err) => console.error('ERROR GRABBING INFO FROM GITHUB!', err));
+            .catch((err) => console.error('Error fetching activity from GitHub', err));
     });
-}
-
-function createIdObject(row, importantEvents) {
-    return {
-        alternateId: row[alternateIdColumnNumber],
-        github: row[githubIdColumnNumber],
-        contributions: importantEvents,
-    };
 }
 
 function isContributionInTimeRange(createdAt, startMoment, endMoment) {
@@ -123,29 +103,106 @@ function isContributionInTimeRange(createdAt, startMoment, endMoment) {
     );
 }
 
-function didTheyQualify(idObject, dateTimes) {
-    const startMoment = dateTimes[0];
-    const endMoment = dateTimes[1];
-    let numberOfQualifyingContributions = 0;
+function fetchRepoLicense(url) {
+    return new Promise((resolve) => {
+        fetch(url, {
+            method: 'GET',
+            headers: {
+                Authorization: `Basic ${githubToken}`,
+            },
+        })
+            .then((response) => {
+                if (!response.ok) {
+                    console.error(`Error: ${response.status} ${response.statusText} \nFor: ${url}`);
 
-    for (let i = 0; i < idObject.contributions.length; i++) {
-        const createdAtString = idObject.contributions[i].created_at;
-        if (isContributionInTimeRange(createdAtString, startMoment, endMoment)) {
-            numberOfQualifyingContributions++;
-        }
-        if (numberOfQualifyingContributions >= minimumNumberOfContributions) {
-            return true;
-        }
-    }
+                    return resolve('none');
+                }
+                response
+                    .json()
+                    .then((json) => {
+                        let license = json.license;
+                        if (license === null) {
+                            return resolve('none');
+                        }
+
+                        return resolve(license.spdx_id);
+                    })
+                    .catch((err) => {
+                        console.error('Error turning response into JSON:', err, url);
+                    });
+            })
+            .catch((err) => console.error('ERROR GRABBING INFO FROM GITHUB!', err));
+    });
 }
 
-function fetchUserDataAndAddToOutput(row, dateTimes) {
+function fetchAllLicenses(events) {
+    let promises = [];
+    for (let i = 0; i < events.length; i++) {
+        promises.push(fetchRepoLicense(events[i].repo.url));
+    }
+
+    return Promise.all(promises);
+}
+
+function filterOnLicense(activities, results, licensesList) {
+    return activities.filter((activity, i) => licensesList.includes(results[i]));
+}
+
+function filterOnDateRange(events, dateTimes) {
+    const startMoment = dateTimes[0];
+    const endMoment = dateTimes[1];
+    const filteredEvents = events.filter((event) => {
+        return isContributionInTimeRange(event.created_at, startMoment, endMoment);
+    });
+
+    return filteredEvents;
+}
+
+function processUser(row, dateTimes, licensesList) {
     const url = `https://api.github.com/users/${row[githubIdColumnNumber]}/events`;
-    fetchPageOfDataAndFilter(url)
-        .then((importantEvents) => {
-            const idObject = createIdObject(row, importantEvents);
-            if (didTheyQualify(idObject, dateTimes)) {
-                process.stdout.write(`${idObject.alternateId}\n`);
+    fetchActivities(url)
+        .then((activities) => {
+            let qualifyingActivities = [];
+            qualifyingActivities = filterResponseForImportantEvents(activities);
+            console.log(
+                `After filtering for important events, ${qualifyingActivities.length} events qualify`
+            );
+            if (ignoreSelfOwnedEvents === 'true') {
+                qualifyingActivities = filterOutSelfOwnedEvents(qualifyingActivities);
+                console.log(
+                    `After filtering out self-owned events, ${qualifyingActivities.length} events qualify`
+                );
+            }
+            qualifyingActivities = filterOnDateRange(qualifyingActivities, dateTimes);
+            console.log(
+                `After filtering for date range, ${qualifyingActivities.length} events qualify`
+            );
+
+            return qualifyingActivities;
+        })
+        .then((qualifyingActivities) => {
+            if (osiLicensesOnly !== 'true') {
+                if ((qualifyingActivities.length = minimumNumberOfContributions)) {
+                    process.stdout.write(
+                        `${row[alternateIdColumnNumber]}, ${row[githubIdColumnNumber]}, ${qualifyingActivities.length}`
+                    );
+                }
+            } else {
+                fetchAllLicenses(qualifyingActivities).then((results) => {
+                    qualifyingActivities = filterOnLicense(
+                        qualifyingActivities,
+                        results,
+                        licensesList
+                    );
+                    console.log(
+                        `After filtering on licenses, ${qualifyingActivities.length} events qualify`
+                    );
+                    if ((qualifyingActivities.length = minimumNumberOfContributions)) {
+                        process.stdout.write(
+                            `${row[alternateIdColumnNumber]}, ${row[githubIdColumnNumber]}, ${qualifyingActivities.length}`
+                        );
+                    }
+                });
             }
         })
         .catch((err) => {
@@ -154,10 +211,7 @@ function fetchUserDataAndAddToOutput(row, dateTimes) {
 }
 
 module.exports = {
-    createIdObject,
-    didTheyQualify,
-    fetchPageOfDataAndFilter,
-    fetchUserDataAndAddToOutput,
     filterResponseForImportantEvents,
     isContributionInTimeRange,
+    processUser,
 };
