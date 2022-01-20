@@ -6,3 +6,4 @@ process.env.IGNORE_SELFOWNED_EVENTS = 'false';
 process.env.MINIMUM_NUMBER_OF_CONTRIBUTIONS = 2;
 process.env.GITHUB_IMPORTANT_EVENTS =
     'CommitCommentEvent,IssueCommentEvent,IssuesEvent,PullRequestEvent,PullRequestReviewEvent,PullRequestReviewCommentEvent';
+process.env.OSI_LICENSES_ONLY = "true";
