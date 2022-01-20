@@ -52,9 +52,7 @@ function fetchLicenseList() {
 function runStarfish() {
     const datagridOfPotentialContributorsInfo = parseCsvData();
 
-    let licensesList = [];
     fetchLicenseList().then((licenses) => {
-        licensesList = licenses;
         const uniqueIds = new Set();
         for (
             let rowNumber = 1;
@@ -72,7 +70,7 @@ function runStarfish() {
 
                 const delayToAvoidOverwhelmingMacNetworkStack = rowNumber * 10;
                 setTimeout(() => {
-                    processUser(currentRow, dateTimes, licensesList);
+                    processUser(currentRow, dateTimes, licenses);
                 }, delayToAvoidOverwhelmingMacNetworkStack);
             }
         }
