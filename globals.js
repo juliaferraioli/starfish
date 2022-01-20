@@ -32,9 +32,15 @@ const dateTimes = getDateTimesFromArgv(timeZone);
 const csvFilename = process.argv[4];
 
 const ignoreSelfOwnedEvents = (process.env.IGNORE_SELFOWNED_EVENTS || 'false').toLowerCase();
+const osiLicensesOnly = (process.env.OSI_LICENSES_ONLY || 'false').toLowerCase();
 console.info(`Configuration set to ignore self-owned events? ${ignoreSelfOwnedEvents}`);
+console.info(`Configuration set to filter on OSI licenses? ${osiLicensesOnly}`);
 if (ignoreSelfOwnedEvents !== 'true' && ignoreSelfOwnedEvents !== 'false') {
     console.error('IGNORE_SELFOWNED_EVENTS must be "true" or "false"');
+    process.exit(1);
+}
+if (osiLicensesOnly !== 'true' && osiLicensesOnly !== 'false') {
+    console.error('OSI_LICENSES_ONLY must be "true" or "false"');
     process.exit(1);
 }
 
@@ -49,4 +55,5 @@ module.exports = {
     githubToken,
     ignoreSelfOwnedEvents,
     minimumNumberOfContributions,
+    osiLicensesOnly,
 };
